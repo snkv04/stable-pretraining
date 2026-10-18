@@ -244,7 +244,6 @@ class InfoNCELoss(torch.nn.Module):
         targets: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         logit_scale: Optional[torch.Tensor | float] = None,
-        reduction: str = "mean",
     ) -> torch.Tensor:
         logit_scale = self.temperature if logit_scale is None else logit_scale
 
@@ -261,7 +260,7 @@ class InfoNCELoss(torch.nn.Module):
         if mask is not None:
             logits = logits.masked_fill(mask, -torch.inf)
 
-        return F.cross_entropy(logits, targets, reduction=reduction)
+        return F.cross_entropy(logits, targets)
 
     def forward(
         self,
@@ -453,29 +452,31 @@ class PVCLoss(_PolyViewLoss):
         anchors = z.reshape(n, -1)
         candidates = torch.cat(all_gather(anchors), dim=0)
 
+        # Views are already normalized, so the logits are built here rather
+        # than in _compute, which re-normalizes and takes one target per row.
+        logits = anchors @ candidates.T / self.temperature  # [M * K, C]
+
         offset = get_rank() * n
         rows = torch.arange(n, device=z.device)
         same_sample = self._same_sample_mask(n, k, candidates.size(0), offset, z.device)
+        # The negatives (views of other samples) are the same for every sibling
+        # target of a query, so one masked logsumexp serves all M - 1 of them.
+        lse_neg = logits.masked_fill(same_sample, -torch.inf).logsumexp(dim=-1)
 
-        # Offset s pairs view a with view (a + s) % m, so the m - 1 offsets
+        # Column s pairs view a with view (a + s) % m, so the m - 1 columns
         # visit every (query, target) pair exactly once.
-        nll = []
-        for s in range(1, m):
-            targets = offset + ((rows // k + s) % m) * k + rows % k
-            mask = same_sample.clone()
-            mask[rows, targets] = False
-            loss = self._compute(
-                anchors, candidates, targets, mask=mask, reduction="none"
-            )
-            # Eq. 14 holds the target view alpha fixed and varies the query
-            # beta, so file each loss under its target for the arithmetic mean.
-            nll.append(loss.new_zeros(n).index_copy(0, targets - offset, loss))
-        nll = torch.stack(nll, dim=-1)  # [M * K, M - 1], -log l_{i, alpha, beta}
+        shifts = torch.arange(1, m, device=z.device)
+        targets = ((rows[:, None] // k + shifts) % m) * k + rows[:, None] % k
+        pos = logits.gather(1, offset + targets)  # [M * K, M - 1]
+        nll = torch.logaddexp(pos, lse_neg[:, None]) - pos  # -log l, by query
 
         if self.aggregation == "geometric":
             return nll.mean()
-        else:
-            return (math.log(m - 1) - torch.logsumexp(-nll, dim=-1)).mean()
+        # Eq. 14 holds the target view alpha fixed and varies the query beta,
+        # so file each loss under its target for the arithmetic mean. Each
+        # column of ``targets`` is a permutation of the rows.
+        nll = torch.zeros_like(nll).scatter(0, targets, nll)
+        return (math.log(m - 1) - torch.logsumexp(-nll, dim=-1)).mean()
 
 
 class SufficientStatisticsLoss(_PolyViewLoss):
