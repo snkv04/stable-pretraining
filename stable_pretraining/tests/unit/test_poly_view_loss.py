@@ -152,6 +152,37 @@ def _eq12_arithmetic_loop(views, tau):
     return -total / (k * m)
 
 
+def _eq22_suff_stats_loop(views, tau):
+    """Sufficient statistics loss (Eq. 22) with ``Q`` from Eq. 24, one term at a time.
+
+    ``T_{i, alpha}`` is view ``alpha`` of sample ``i`` and ``Q_{i, alpha~}`` is
+    the mean of that sample's other ``M - 1`` views. Two choices follow
+    Algorithm 2 where the printed equations differ: ``Q`` is L2-normalized
+    (Eq. 24 leaves it unnormalized), and the negatives run over ``j != i`` as
+    in Eq. 21 (Eq. 22 prints ``j = 1..K``, which would count the positive
+    twice).
+    """
+    z = F.normalize(torch.stack(views, dim=1), dim=-1)  # [k, m, d]
+    k, m, _ = z.shape
+    q = torch.empty_like(z)
+    for i in range(k):
+        for alpha in range(m):
+            rest = sum(z[i, beta] for beta in range(m) if beta != alpha) / (m - 1)
+            q[i, alpha] = F.normalize(rest, dim=-1)
+    total = 0.0
+    for i in range(k):
+        for alpha in range(m):
+            pos = (z[i, alpha] @ q[i, alpha]) / tau
+            terms = [pos]
+            for j in range(k):
+                if j == i:
+                    continue
+                for gamma in range(m):
+                    terms.append((z[i, alpha] @ q[j, gamma]) / tau)
+            total += pos - torch.logsumexp(torch.stack(terms), dim=0)
+    return -total / (k * m)
+
+
 @pytest.mark.parametrize("temperature", [0.1, 0.5, 1.0])
 @pytest.mark.parametrize("loss_fn", LOSS_FNS)
 def test_two_views_equal_ntxent(loss_fn, temperature):
@@ -242,3 +273,29 @@ def test_suff_stats_matches_algorithm_2(m):
     views = _views(m)
     expected = _algorithm_2(views, tau=0.5)
     torch.testing.assert_close(SufficientStatisticsLoss(0.5)(views), expected)
+
+
+@pytest.mark.parametrize("m", [2, 4, 8])
+def test_suff_stats_matches_eq22_loop(m):
+    views = _views(m)
+    expected = _eq22_suff_stats_loop(views, tau=0.5)
+    torch.testing.assert_close(SufficientStatisticsLoss(0.5)(views), expected)
+
+
+@pytest.mark.parametrize("loss_fn", LOSS_FNS)
+def test_gradients_reach_every_view(loss_fn):
+    views = [v.requires_grad_() for v in _views(4)]
+    loss_fn(0.5)(views).backward()
+    for idx, v in enumerate(views):
+        assert v.grad is not None, f"view {idx} received no gradient"
+        assert torch.isfinite(v.grad).all(), f"view {idx} has a non-finite gradient"
+        assert v.grad.abs().sum() > 0, f"view {idx} has an all-zero gradient"
+
+
+@pytest.mark.parametrize("loss_fn", LOSS_FNS)
+def test_gradcheck(loss_fn):
+    # Compares analytic gradients with finite differences, including the
+    # index_copy that files the arithmetic losses under their target view.
+    loss = loss_fn(0.5)
+    views = tuple(v.requires_grad_() for v in _views(3, k=3, d=4))
+    assert torch.autograd.gradcheck(lambda *vs: loss(list(vs)), views)
