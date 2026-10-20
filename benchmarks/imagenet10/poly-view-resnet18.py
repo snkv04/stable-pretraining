@@ -399,12 +399,16 @@ KNN = "eval/knn_probe_top1"
 ONLINE_LINEAR = "eval/linear_probe_top1_epoch"
 
 
-def load_run(path: Path) -> tuple:
-    """Label and validation history of one run, pooled over its seeds.
+def load_run(path: Path, seeds: int | None = None) -> tuple:
+    """Label and validation history of one run, pooled over its finished seeds.
+
+    A seed counts as finished once ``train`` has written its ``final.json``.
 
     Args:
         path (Path): A run directory holding ``seed*/`` subdirectories, or a
             single seed directory.
+        seeds (int | None): Use only ``seed0`` .. ``seed{seeds-1}`` of a run
+            directory; all seeds if None.
 
     Returns:
         tuple: ``(label, history)``, where ``history`` has one row per logged
@@ -412,19 +416,22 @@ def load_run(path: Path) -> tuple:
     """
     import pandas as pd
 
-    seed_dirs = sorted(path.glob("seed*")) or [path]
+    seed_dirs = sorted(path.glob("seed*"), key=lambda d: int(d.name[4:]))
+    if seeds is not None:
+        seed_dirs = [d for d in seed_dirs if int(d.name[4:]) < seeds]
+    seed_dirs = seed_dirs or [path]
     histories = []
     for seed_dir in seed_dirs:
         metrics_path = seed_dir / "metrics.csv"
-        if not metrics_path.exists():
-            print(f"skipping {seed_dir}: no metrics.csv")
+        if not (seed_dir / "final.json").exists():
+            print(f"skipping {seed_dir}: no final.json (unfinished)")
             continue
         history = pd.read_csv(metrics_path).reindex(
             columns=["epoch", "step", KNN, ONLINE_LINEAR]
         )
         histories.append(history.assign(seed=seed_dir.name))
     if not histories:
-        raise SystemExit(f"no metrics.csv under {path}")
+        raise SystemExit(f"no finished seeds under {path}")
 
     cfg = json.loads((seed_dirs[0] / "config.json").read_text())
     method = (
@@ -495,6 +502,9 @@ def main(argv=None) -> None:
     plot_parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     plot_parser.add_argument("--x", choices=("epoch", "step"), default="epoch")
     plot_parser.add_argument(
+        "--seeds", type=int, default=None, help="use only seeds 0..n-1 of each run"
+    )
+    plot_parser.add_argument(
         "--out", type=Path, default=None, help="default: <log-dir>/curves_<x>.png"
     )
 
@@ -506,7 +516,7 @@ def main(argv=None) -> None:
         log_dir = args["log_dir"]
         paths = [Path(r) if Path(r).is_dir() else log_dir / r for r in args["runs"]]
         out = args["out"] or log_dir / f"curves_{args['x']}.png"
-        plot_curves([load_run(p) for p in paths], args["x"], out)
+        plot_curves([load_run(p, args["seeds"]) for p in paths], args["x"], out)
 
 
 if __name__ == "__main__":
