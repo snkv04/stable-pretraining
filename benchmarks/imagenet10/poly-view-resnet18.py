@@ -198,7 +198,16 @@ def build_data(cfg: Config) -> spt.data.DataModule:
 
 
 def poly_view_forward(self, batch, stage):
-    """Training: M views from StackedMultiView. Validation: one center crop."""
+    """Training: M views from StackedMultiView. Validation: one center crop.
+
+    ``spt.forward.poly_view`` encodes each view in its own backbone call, as
+    ``spt.forward.simclr`` does, so BatchNorm normalizes each view separately.
+    Here all views go through one call, so BatchNorm normalizes over all of them.
+    We concatenate because per-view calls shrink the BatchNorm batch to
+    ``K = V / M`` as ``M`` grows, but both papers normalize over the full batch:
+    Poly-View with synced BatchNorm (:cite:`shidani2024polyview`, Appendix F.1),
+    SimCLR with Global BN (Chen et al., 2020, Section 2.2).
+    """
     if "image" in batch:
         return {
             "embedding": self.backbone(batch["image"]),
