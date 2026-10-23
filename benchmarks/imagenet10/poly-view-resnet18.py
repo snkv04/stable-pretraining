@@ -72,7 +72,10 @@ class Config:
     seed: int = 0
     loss: str = field(
         default="geometric",
-        metadata={"choices": LOSSES, "help": "poly-view loss (any loss is SimCLR at M=2)"},
+        metadata={
+            "choices": LOSSES,
+            "help": "poly-view loss (any loss is SimCLR at M=2)",
+        },
     )
     views_per_step: int = field(
         default=256, metadata={"help": "encoder budget V = K * M, fixed across arms"}
@@ -99,7 +102,9 @@ class Config:
         if not 0 <= self.warmup_epochs < self.epochs:
             raise ValueError("warmup_epochs must be in [0, epochs)")
         if self.epochs % self.val_every:
-            raise ValueError("epochs must be a multiple of val_every to log the last epoch")
+            raise ValueError(
+                "epochs must be a multiple of val_every to log the last epoch"
+            )
 
     @property
     def batch_size(self) -> int:
@@ -361,7 +366,11 @@ def evaluate_offline(cfg: Config, module: PolyView) -> dict:
     # Lightning may move the module back to CPU after fit.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     backbone = module.backbone.to(device)
-    return {"offline_linear_top1": offline_linear_probe(features("train"), features("validation"))}
+    return {
+        "offline_linear_top1": offline_linear_probe(
+            features("train"), features("validation")
+        )
+    }
 
 
 def _timestamp(t: datetime) -> str:
@@ -445,7 +454,7 @@ def load_run(path: Path, seeds: int | None = None) -> tuple:
 
 
 def plot_curves(runs: list, x: str, path: Path) -> None:
-    """kNN and online-linear top-1 against ``x`` ("epoch" or "step"), mean ± std."""
+    """KNN and online-linear top-1 against ``x`` ("epoch" or "step"), mean ± std."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -459,7 +468,10 @@ def plot_curves(runs: list, x: str, path: Path) -> None:
             xs = stats.index + 1 if x == "epoch" else stats.index
             ax.plot(xs, stats["mean"], marker="o", markersize=3, label=label)
             ax.fill_between(
-                xs, stats["mean"] - stats["std"], stats["mean"] + stats["std"], alpha=0.2
+                xs,
+                stats["mean"] - stats["std"],
+                stats["mean"] + stats["std"],
+                alpha=0.2,
             )
     for ax, title in zip(axes, ("kNN top-1 (%)", "Online linear top-1 (%)")):
         ax.set_title(title)

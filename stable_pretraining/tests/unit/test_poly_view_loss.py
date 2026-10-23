@@ -27,8 +27,7 @@ def _views(m, k=K, d=D, seed=0):
 
 
 def _get_mask(k, m, beta):
-    """``get_mask`` from Algorithms 1 and 2: a ``[k, m, k]`` mask with ones on
-    the self-sample index for every view except ``beta``."""
+    """``get_mask`` (Algs. 1-2): ``[k, m, k]`` self-sample mask excluding view ``beta``."""
     mask_sample = torch.eye(k, dtype=torch.float64)[:, None, :]  # ka kb -> ka 1 kb
     mask_beta = torch.ones(m, dtype=torch.float64)[None, :, None].clone()  # m -> 1 m 1
     mask_beta[:, beta] = 0
@@ -207,7 +206,9 @@ def test_collapse_known_value(loss_fn):
     # positive over 1 + M(K - 1) equal terms and every loss equals
     # c(B, M) = log(B - M + 1) = log(1 + M(K - 1)): log(17) for M = 4, K = 5.
     m, k = 4, 5
-    v = torch.randn(1, D, generator=torch.Generator().manual_seed(0), dtype=torch.float64)
+    v = torch.randn(
+        1, D, generator=torch.Generator().manual_seed(0), dtype=torch.float64
+    )
     views = [v.expand(k, D) for _ in range(m)]
     expected = torch.tensor(math.log(1 + m * (k - 1)), dtype=torch.float64)
     torch.testing.assert_close(loss_fn(0.5)(views), expected)

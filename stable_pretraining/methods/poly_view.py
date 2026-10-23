@@ -68,9 +68,7 @@ class PolyView(SimCLR):
         encoder_name: Union[str, nn.Module] = "vit_small_patch16_224",
         projector_dims: Sequence[int] = (2048, 2048, 256),
         temperature: float = 0.1,
-        loss: Literal[
-            "geometric", "arithmetic", "sufficient_statistics"
-        ] = "geometric",
+        loss: Literal["geometric", "arithmetic", "sufficient_statistics"] = "geometric",
         low_resolution: bool = False,
         pretrained: bool = False,
     ):
